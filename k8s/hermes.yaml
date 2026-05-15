@@ -1,0 +1,213 @@
+# Reference fragment only.
+# The Terraform-rendered manifest in generated/workloads.yaml is authoritative for live rollouts.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: hermes-data
+  namespace: hermes
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: lvm
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: hermes-env-bootstrap
+  namespace: hermes
+type: Opaque
+stringData:
+  API_SERVER_KEY: CHANGE_ME_LOCAL_ONLY
+  .env: |
+    API_SERVER_ENABLED=true
+    API_SERVER_HOST=0.0.0.0
+    API_SERVER_PORT=8642
+    API_SERVER_KEY=CHANGE_ME_LOCAL_ONLY
+    API_SERVER_MODEL_NAME=hermes-agent
+    API_SERVER_CORS_ORIGINS=http://127.0.0.1:9119,http://localhost:9119
+    HERMES_DASHBOARD=1
+    HERMES_DASHBOARD_HOST=0.0.0.0
+    HERMES_DASHBOARD_PORT=9119
+    HERMES_DASHBOARD_TUI=1
+    HERMES_STREAM_READ_TIMEOUT=1800
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hermes-config-bootstrap
+  namespace: hermes
+data:
+  config.yaml: |
+    model:
+      default: gemma4:26b
+      provider: custom
+      base_url: http://gemma4:11434/v1
+      api_key: ""
+      context_length: 262144
+    terminal:
+      backend: local
+      cwd: /opt/data/workspace
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hermes
+  namespace: hermes
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: hermes
+  template:
+    metadata:
+      labels:
+        app: hermes
+    spec:
+      securityContext:
+        fsGroup: 10000
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              preference:
+                matchExpressions:
+                  - key: hermes.openstack.org/gemma4
+                    operator: DoesNotExist
+      initContainers:
+        - name: hermes-bootstrap
+          image: nousresearch/hermes-agent:latest
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              set -eu
+              mkdir -p /opt/data/logs /opt/data/sessions /opt/data/memories /opt/data/skills /opt/data/cron /opt/data/workspace
+              cp /bootstrap-config/config.yaml /opt/data/config.yaml
+              cp /bootstrap-env/.env /opt/data/.env
+              chmod 600 /opt/data/.env
+          volumeMounts:
+            - name: hermes-data
+              mountPath: /opt/data
+            - name: hermes-config-bootstrap
+              mountPath: /bootstrap-config
+              readOnly: true
+            - name: hermes-env-bootstrap
+              mountPath: /bootstrap-env
+              readOnly: true
+        - name: hermes-dashboard-assets
+          image: nousresearch/hermes-agent:latest
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              set -eu
+              rm -rf /work/*
+              mkdir -p /work/web /work/hermes_cli /dashboard
+              cp -R /opt/hermes/web/. /work/web/
+              cp -R /opt/hermes/hermes_cli/. /work/hermes_cli/
+              cd /work/web
+              npm install --prefer-offline --no-audit
+              npm run build
+              test -d /work/hermes_cli/web_dist
+              cp -R /work/hermes_cli/web_dist/. /dashboard/
+          volumeMounts:
+            - name: hermes-dashboard-build
+              mountPath: /work
+            - name: hermes-dashboard-dist
+              mountPath: /dashboard
+      containers:
+        - name: hermes
+          image: nousresearch/hermes-agent:latest
+          args:
+            - gateway
+            - run
+          env:
+            - name: HERMES_DASHBOARD
+              value: "1"
+            - name: HERMES_DASHBOARD_HOST
+              value: "0.0.0.0"
+            - name: HERMES_DASHBOARD_PORT
+              value: "9119"
+            - name: HERMES_DASHBOARD_TUI
+              value: "1"
+            - name: API_SERVER_ENABLED
+              value: "true"
+            - name: API_SERVER_HOST
+              value: "0.0.0.0"
+            - name: API_SERVER_PORT
+              value: "8642"
+            - name: API_SERVER_MODEL_NAME
+              value: "hermes-agent"
+            - name: API_SERVER_CORS_ORIGINS
+              value: "http://127.0.0.1:9119,http://localhost:9119"
+            - name: API_SERVER_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: hermes-env-bootstrap
+                  key: API_SERVER_KEY
+          ports:
+            - name: api
+              containerPort: 8642
+            - name: dashboard
+              containerPort: 9119
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 2Gi
+          volumeMounts:
+            - name: hermes-data
+              mountPath: /opt/data
+            - name: hermes-dashboard-dist
+              mountPath: /opt/hermes/hermes_cli/web_dist
+      volumes:
+        - name: hermes-data
+          persistentVolumeClaim:
+            claimName: hermes-data
+        - name: hermes-config-bootstrap
+          configMap:
+            name: hermes-config-bootstrap
+        - name: hermes-env-bootstrap
+          secret:
+            secretName: hermes-env-bootstrap
+        - name: hermes-dashboard-build
+          emptyDir: {}
+        - name: hermes-dashboard-dist
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: hermes
+  namespace: hermes
+spec:
+  selector:
+    app: hermes
+  ports:
+    - name: api
+      port: 8642
+      targetPort: 8642
+    - name: dashboard
+      port: 9119
+      targetPort: 9119
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: hermes-dashboard-public
+  namespace: hermes
+  annotations:
+    loadbalancer.openstack.org/floating-network-id: CHANGE_ME_PUBLIC_NETWORK_ID
+spec:
+  type: LoadBalancer
+  selector:
+    app: hermes
+  ports:
+    - name: http
+      port: 80
+      targetPort: 9119

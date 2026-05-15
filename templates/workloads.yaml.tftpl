@@ -1,0 +1,304 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ${namespace}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ollama-data
+  namespace: ${namespace}
+spec:
+  accessModes:
+    - ReadWriteOnce
+%{ if storage_class_name != "" ~}
+  storageClassName: ${storage_class_name}
+%{ endif ~}
+  resources:
+    requests:
+      storage: ${ollama_data_size}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: hermes-data
+  namespace: ${namespace}
+spec:
+  accessModes:
+    - ReadWriteOnce
+%{ if storage_class_name != "" ~}
+  storageClassName: ${storage_class_name}
+%{ endif ~}
+  resources:
+    requests:
+      storage: ${hermes_data_size}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: hermes-env-bootstrap
+  namespace: ${namespace}
+type: Opaque
+stringData:
+  API_SERVER_KEY: ${hermes_api_server_key}
+  .env: |
+    API_SERVER_ENABLED=true
+    API_SERVER_HOST=0.0.0.0
+    API_SERVER_PORT=${hermes_api_port}
+    API_SERVER_KEY=${hermes_api_server_key}
+    API_SERVER_MODEL_NAME=${hermes_api_server_model_name}
+    API_SERVER_CORS_ORIGINS=${hermes_api_server_cors}
+    HERMES_DASHBOARD=1
+    HERMES_DASHBOARD_HOST=0.0.0.0
+    HERMES_DASHBOARD_PORT=${hermes_dashboard_port}
+    HERMES_DASHBOARD_TUI=1
+    HERMES_STREAM_READ_TIMEOUT=1800
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hermes-config-bootstrap
+  namespace: ${namespace}
+data:
+  config.yaml: |
+    model:
+      default: ${gemma_model}
+      provider: custom
+      base_url: http://gemma4:11434/v1
+      api_key: ""
+      context_length: ${gemma_context_tokens}
+    terminal:
+      backend: local
+      cwd: /opt/data/workspace
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gemma4
+  namespace: ${namespace}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gemma4
+  template:
+    metadata:
+      labels:
+        app: gemma4
+    spec:
+      nodeSelector:
+        ${gemma_node_label_key}: "${gemma_node_label_value}"
+      containers:
+        - name: ollama
+          image: ollama/ollama:latest
+          ports:
+            - containerPort: 11434
+              name: http
+          env:
+            - name: OLLAMA_HOST
+              value: 0.0.0.0:11434
+          resources:
+            requests:
+              memory: 20Gi
+            limits:
+              memory: 22Gi
+          volumeMounts:
+            - name: ollama-data
+              mountPath: /root/.ollama
+        - name: model-loader
+          image: curlimages/curl:8.13.0
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              until curl -fsS http://127.0.0.1:11434/api/tags >/dev/null; do
+                sleep 5
+              done
+              until curl -fsS http://127.0.0.1:11434/api/pull \
+                -H 'Content-Type: application/json' \
+                -d '{"model":"${gemma_model}","stream":false}' >/dev/null; do
+                sleep 15
+              done
+              while true; do
+                sleep 3600
+              done
+      volumes:
+        - name: ollama-data
+          persistentVolumeClaim:
+            claimName: ollama-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gemma4
+  namespace: ${namespace}
+spec:
+  selector:
+    app: gemma4
+  ports:
+    - name: http
+      port: 11434
+      targetPort: 11434
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hermes
+  namespace: ${namespace}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: hermes
+  template:
+    metadata:
+      labels:
+        app: hermes
+    spec:
+      securityContext:
+        fsGroup: 10000
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              preference:
+                matchExpressions:
+                  - key: ${gemma_node_label_key}
+                    operator: DoesNotExist
+      initContainers:
+        - name: hermes-bootstrap
+          image: ${hermes_image}
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              set -eu
+              mkdir -p /opt/data/logs /opt/data/sessions /opt/data/memories /opt/data/skills /opt/data/cron /opt/data/workspace
+              cp /bootstrap-config/config.yaml /opt/data/config.yaml
+              cp /bootstrap-env/.env /opt/data/.env
+              chmod 600 /opt/data/.env
+          volumeMounts:
+            - name: hermes-data
+              mountPath: /opt/data
+            - name: hermes-config-bootstrap
+              mountPath: /bootstrap-config
+              readOnly: true
+            - name: hermes-env-bootstrap
+              mountPath: /bootstrap-env
+              readOnly: true
+        - name: hermes-dashboard-assets
+          image: ${hermes_image}
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              set -eu
+              rm -rf /work/*
+              mkdir -p /work/web /work/hermes_cli /dashboard
+              cp -R /opt/hermes/web/. /work/web/
+              cp -R /opt/hermes/hermes_cli/. /work/hermes_cli/
+              cd /work/web
+              npm install --prefer-offline --no-audit
+              npm run build
+              test -d /work/hermes_cli/web_dist
+              cp -R /work/hermes_cli/web_dist/. /dashboard/
+          volumeMounts:
+            - name: hermes-dashboard-build
+              mountPath: /work
+            - name: hermes-dashboard-dist
+              mountPath: /dashboard
+      containers:
+        - name: hermes
+          image: ${hermes_image}
+          args:
+            - gateway
+            - run
+          env:
+            - name: HERMES_DASHBOARD
+              value: "1"
+            - name: HERMES_DASHBOARD_HOST
+              value: "0.0.0.0"
+            - name: HERMES_DASHBOARD_PORT
+              value: "${hermes_dashboard_port}"
+            - name: HERMES_DASHBOARD_TUI
+              value: "1"
+            - name: API_SERVER_ENABLED
+              value: "true"
+            - name: API_SERVER_HOST
+              value: "0.0.0.0"
+            - name: API_SERVER_PORT
+              value: "${hermes_api_port}"
+            - name: API_SERVER_MODEL_NAME
+              value: "${hermes_api_server_model_name}"
+            - name: API_SERVER_CORS_ORIGINS
+              value: "${hermes_api_server_cors}"
+            - name: API_SERVER_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: hermes-env-bootstrap
+                  key: API_SERVER_KEY
+          ports:
+            - name: api
+              containerPort: 8642
+            - name: dashboard
+              containerPort: 9119
+          resources:
+            requests:
+              cpu: ${hermes_cpu_request}
+              memory: ${hermes_memory_request}
+            limits:
+              cpu: ${hermes_cpu_limit}
+              memory: ${hermes_memory_limit}
+          volumeMounts:
+            - name: hermes-data
+              mountPath: /opt/data
+            - name: hermes-dashboard-dist
+              mountPath: /opt/hermes/hermes_cli/web_dist
+      volumes:
+        - name: hermes-data
+          persistentVolumeClaim:
+            claimName: hermes-data
+        - name: hermes-config-bootstrap
+          configMap:
+            name: hermes-config-bootstrap
+        - name: hermes-env-bootstrap
+          secret:
+            secretName: hermes-env-bootstrap
+        - name: hermes-dashboard-build
+          emptyDir: {}
+        - name: hermes-dashboard-dist
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: hermes
+  namespace: ${namespace}
+spec:
+  selector:
+    app: hermes
+  ports:
+    - name: api
+      port: ${hermes_api_port}
+      targetPort: 8642
+    - name: dashboard
+      port: ${hermes_dashboard_port}
+      targetPort: 9119
+%{ if hermes_dashboard_lb_enabled ~}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ${hermes_dashboard_public_service}
+  namespace: ${namespace}
+  annotations:
+    loadbalancer.openstack.org/floating-network-id: ${public_network_id}
+spec:
+  type: LoadBalancer
+  selector:
+    app: hermes
+  ports:
+    - name: http
+      port: ${hermes_dashboard_public_port}
+      targetPort: 9119
+%{ endif ~}

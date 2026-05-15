@@ -1,0 +1,12 @@
+clouds.yaml
+clouds.yaml.example
+terraform.tfvars
+*.auto.tfvars
+*.tfplan
+*.tfstate
+*.tfstate.*
+.terraform/
+kubeconfig/
+generated/
+.agents/
+.codex/
