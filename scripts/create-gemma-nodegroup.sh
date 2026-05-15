@@ -28,9 +28,22 @@ else
   nodegroup_count=$(terraform output -raw gemma_worker_count)
 fi
 
-nodegroup_image=$(terraform output -raw magnum_image_id 2>/dev/null || true)
+if [ "$#" -gt 4 ]; then
+  nodegroup_image=$5
+else
+  nodegroup_image=$(terraform output -raw magnum_image_id 2>/dev/null || true)
+fi
+
 if [ -z "$nodegroup_image" ]; then
-  nodegroup_image=$(openstack --os-cloud "$OS_CLOUD" image show ubuntu-jammy-kube-v1.34.7 -f value -c id)
+  nodegroup_image_name=$(terraform output -raw magnum_image_name 2>/dev/null || true)
+  if [ -n "$nodegroup_image_name" ]; then
+    nodegroup_image=$(openstack --os-cloud "$OS_CLOUD" image show "$nodegroup_image_name" -f value -c id)
+  fi
+fi
+
+if [ -z "$nodegroup_image" ]; then
+  echo "Could not resolve a Magnum nodegroup image. Pass it explicitly or apply Terraform first." >&2
+  exit 1
 fi
 
 if openstack --os-cloud "$OS_CLOUD" coe nodegroup show "$cluster_name" "$nodegroup_name" >/dev/null 2>&1; then

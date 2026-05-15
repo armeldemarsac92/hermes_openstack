@@ -1,5 +1,6 @@
 # Reference fragment only.
 # The Terraform-rendered manifest in generated/workloads.yaml is authoritative for live rollouts.
+# Replace or remove cloud-specific values like storageClassName before using this fragment directly.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -8,7 +9,7 @@ metadata:
 spec:
   accessModes:
     - ReadWriteOnce
-  storageClassName: lvm
+  storageClassName: CHANGE_ME_OR_REMOVE
   resources:
     requests:
       storage: 40Gi
@@ -39,8 +40,11 @@ spec:
           env:
             - name: OLLAMA_HOST
               value: 0.0.0.0:11434
+            - name: OLLAMA_KEEP_ALIVE
+              value: 24h
           resources:
             requests:
+              cpu: "2"
               memory: 20Gi
             limits:
               memory: 22Gi

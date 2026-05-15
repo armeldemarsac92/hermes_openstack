@@ -1,26 +1,40 @@
-cloud                  = "tenant"
-cluster_name           = "hermes-test"
-cluster_template_name  = "k8s-capi-helm-ubuntu-v1.34.7"
-magnum_image_name      = "ubuntu-jammy-kube-v1.34.7"
-public_network_name    = "public"
-worker_flavor          = "m1.medium"
-master_flavor          = "m1.medium"
-gemma_nodegroup_name   = "gemma4-large"
-gemma_worker_flavor    = "m1.2xlarge"
-gemma_worker_count     = 1
-master_count           = 1
-node_count             = 1
-cluster_create_timeout = 90
-keypair_name           = "hermes-test-key"
-kubernetes_namespace   = "hermes"
-storage_class_name     = "lvm"
-ollama_data_size       = "40Gi"
-gemma_model            = "gemma4:26b"
-gemma_context_tokens   = 262144
-hermes_image           = "nousresearch/hermes-agent:latest"
-hermes_data_size       = "10Gi"
-hermes_dashboard_port  = 9119
-hermes_dashboard_public_port = 80
-hermes_api_port        = 8642
-hermes_api_server_model_name = "hermes-agent"
-hermes_dashboard_loadbalancer_enabled = true
+cloud                 = "tenant"
+# Adjust the cloud-specific values below for your environment.
+cluster_name          = "hermes-magnum"
+cluster_template_name = "k8s-capi-helm-ubuntu-v1.34.7"
+magnum_image_name     = "ubuntu-jammy-kube-v1.34.7"
+public_network_name   = "public"
+generated_dir         = "generated"
+
+create_keypair        = true
+keypair_name          = "hermes-magnum-key"
+existing_keypair_name = null
+
+master_flavor = "m1.medium"
+worker_flavor = "m1.medium"
+master_count  = 1
+node_count    = 1
+
+gemma_nodegroup_enabled = true
+gemma_nodegroup_name    = "gemma-large"
+gemma_worker_flavor     = "m1.2xlarge"
+gemma_worker_count      = 1
+
+kubernetes_namespace = "hermes"
+storage_class_name   = ""
+
+ollama_image         = "ollama/ollama:latest"
+ollama_data_size     = "40Gi"
+ollama_keep_alive    = "24h"
+gemma_model          = "gemma4:26b"
+gemma_context_tokens = 262144
+gemma_memory_request = "20Gi"
+gemma_memory_limit   = "22Gi"
+gemma_cpu_request    = "2"
+gemma_cpu_limit      = ""
+
+hermes_image                           = "nousresearch/hermes-agent:latest"
+hermes_data_size                       = "10Gi"
+hermes_dashboard_loadbalancer_enabled  = true
+hermes_dashboard_public_port           = 80
+hermes_api_server_model_name           = "hermes-agent"

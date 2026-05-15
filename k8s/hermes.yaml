@@ -1,5 +1,6 @@
 # Reference fragment only.
 # The Terraform-rendered manifest in generated/workloads.yaml is authoritative for live rollouts.
+# Replace or remove cloud-specific values like storageClassName before using this fragment directly.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -8,7 +9,7 @@ metadata:
 spec:
   accessModes:
     - ReadWriteOnce
-  storageClassName: lvm
+  storageClassName: CHANGE_ME_OR_REMOVE
   resources:
     requests:
       storage: 10Gi

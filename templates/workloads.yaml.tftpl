@@ -52,7 +52,7 @@ stringData:
     HERMES_DASHBOARD_HOST=0.0.0.0
     HERMES_DASHBOARD_PORT=${hermes_dashboard_port}
     HERMES_DASHBOARD_TUI=1
-    HERMES_STREAM_READ_TIMEOUT=1800
+    HERMES_STREAM_READ_TIMEOUT=${workload_rollout_timeout_seconds}
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -64,7 +64,7 @@ data:
     model:
       default: ${gemma_model}
       provider: custom
-      base_url: http://gemma4:11434/v1
+      base_url: http://${gemma_service_name}:11434/v1
       api_key: ""
       context_length: ${gemma_context_tokens}
     terminal:
@@ -78,6 +78,8 @@ metadata:
   namespace: ${namespace}
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: gemma4
@@ -86,27 +88,37 @@ spec:
       labels:
         app: gemma4
     spec:
+%{ if gemma_node_selector_enabled ~}
       nodeSelector:
         ${gemma_node_label_key}: "${gemma_node_label_value}"
+%{ endif ~}
       containers:
         - name: ollama
-          image: ollama/ollama:latest
+          image: ${ollama_image}
           ports:
             - containerPort: 11434
               name: http
           env:
             - name: OLLAMA_HOST
               value: 0.0.0.0:11434
+            - name: OLLAMA_KEEP_ALIVE
+              value: ${ollama_keep_alive}
           resources:
             requests:
-              memory: 20Gi
+%{ if gemma_cpu_request != "" ~}
+              cpu: ${gemma_cpu_request}
+%{ endif ~}
+              memory: ${gemma_memory_request}
             limits:
-              memory: 22Gi
+%{ if gemma_cpu_limit != "" ~}
+              cpu: ${gemma_cpu_limit}
+%{ endif ~}
+              memory: ${gemma_memory_limit}
           volumeMounts:
             - name: ollama-data
               mountPath: /root/.ollama
         - name: model-loader
-          image: curlimages/curl:8.13.0
+          image: ${model_loader_image}
           command:
             - /bin/sh
             - -ec
@@ -130,7 +142,7 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: gemma4
+  name: ${gemma_service_name}
   namespace: ${namespace}
 spec:
   selector:
@@ -157,6 +169,7 @@ spec:
     spec:
       securityContext:
         fsGroup: 10000
+%{ if gemma_node_selector_enabled ~}
       affinity:
         nodeAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
@@ -165,6 +178,7 @@ spec:
                 matchExpressions:
                   - key: ${gemma_node_label_key}
                     operator: DoesNotExist
+%{ endif ~}
       initContainers:
         - name: hermes-bootstrap
           image: ${hermes_image}
@@ -239,9 +253,9 @@ spec:
                   key: API_SERVER_KEY
           ports:
             - name: api
-              containerPort: 8642
+              containerPort: ${hermes_api_port}
             - name: dashboard
-              containerPort: 9119
+              containerPort: ${hermes_dashboard_port}
           resources:
             requests:
               cpu: ${hermes_cpu_request}
@@ -272,7 +286,7 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: hermes
+  name: ${hermes_service_name}
   namespace: ${namespace}
 spec:
   selector:
@@ -280,10 +294,10 @@ spec:
   ports:
     - name: api
       port: ${hermes_api_port}
-      targetPort: 8642
+      targetPort: ${hermes_api_port}
     - name: dashboard
       port: ${hermes_dashboard_port}
-      targetPort: 9119
+      targetPort: ${hermes_dashboard_port}
 %{ if hermes_dashboard_lb_enabled ~}
 ---
 apiVersion: v1
@@ -300,5 +314,5 @@ spec:
   ports:
     - name: http
       port: ${hermes_dashboard_public_port}
-      targetPort: 9119
+      targetPort: ${hermes_dashboard_port}
 %{ endif ~}
