@@ -248,13 +248,13 @@ Use the default user for your VM image. For Ubuntu images, keep `User ubuntu`; f
 Test with:
 
 ```sh
-ssh ubuntu@vm-antoine.apps.mustelinet.com
+ssh ubuntu@vm-test.apps.mustelinet.com
 ```
 
 You can also rely on the configured user:
 
 ```sh
-ssh vm-antoine.apps.mustelinet.com
+ssh vm-test.apps.mustelinet.com
 ```
 
 ## Common Customization
