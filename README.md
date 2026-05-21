@@ -123,11 +123,29 @@ Required commands:
 - `kubectl`
 - Magnum CLI support for `openstack coe ...`
 - Designate CLI support for `openstack recordset ...` when `hermes_dashboard_dns_enabled = true`
+- `cloudflared` when connecting to VMs over SSH through the Mustelinet Cloudflare Access bastion
 
 One Fedora installation pattern is:
 
 ```sh
-sudo dnf install -y python3-openstackclient python3-magnumclient python3-designateclient kubernetes1.33-client
+curl -fsSL https://pkg.cloudflare.com/cloudflared.repo | sudo tee /etc/yum.repos.d/cloudflared.repo
+sudo dnf install -y python3-openstackclient python3-magnumclient python3-designateclient kubernetes1.33-client cloudflared
+```
+
+On Ubuntu or Debian, install `cloudflared` with:
+
+```sh
+sudo mkdir -p --mode=0755 /usr/share/keyrings
+curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg | sudo tee /usr/share/keyrings/cloudflare-main.gpg >/dev/null
+echo "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared any main" | sudo tee /etc/apt/sources.list.d/cloudflared.list
+sudo apt update
+sudo apt install -y cloudflared
+```
+
+Install the OpenStack and Kubernetes CLIs through your distribution packages or Python environment on Ubuntu/Debian:
+
+```sh
+sudo apt install -y python3-openstackclient kubernetes-client
 ```
 
 Verify your auth and tooling before Terraform:
@@ -213,6 +231,31 @@ The template should already encode the Magnum driver-specific labels your cloud 
    ```sh
    kubectl -n hermes port-forward svc/"$(terraform output -raw hermes_service_name)" 9119:9119 8642:8642
    ```
+
+## SSH Access Through Cloudflare Bastion
+
+SSH access to hosts under `*.apps.mustelinet.com` goes through the Cloudflare Access bastion at `ssh.mustelinet.com`. After installing `cloudflared`, add this to `~/.ssh/config`:
+
+```sshconfig
+Host *.apps.mustelinet.com
+    User ubuntu
+    ProxyCommand cloudflared access ssh --hostname ssh.mustelinet.com --destination %h:%p
+    ServerAliveInterval 30
+```
+
+Use the default user for your VM image. For Ubuntu images, keep `User ubuntu`; for a different image family, replace it with that image's default SSH user.
+
+Test with:
+
+```sh
+ssh ubuntu@vm-antoine.apps.mustelinet.com
+```
+
+You can also rely on the configured user:
+
+```sh
+ssh vm-antoine.apps.mustelinet.com
+```
 
 ## Common Customization
 
