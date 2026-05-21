@@ -72,9 +72,16 @@ This repository is generic, but the cloud still needs several Magnum capabilitie
 - A Glance image compatible with that template and with any extra nodegroups you plan to create.
 - A working Cinder CSI / StorageClass path if you want persistent Ollama and Hermes volumes.
 - A working OpenStack Cloud Controller Manager + Octavia path if you enable the public Hermes dashboard LoadBalancer.
+- A shared Designate zone if `hermes_dashboard_dns_enabled = true`; for example, an admin-owned `apps.mustelinet.com.` zone must be shared to the tenant project before the tenant application credential can manage records.
 - A Magnum driver path that supports nodegroups if you enable `gemma_nodegroup_enabled`.
 
 For application-credential auth, Magnum commonly also needs an unrestricted application credential because cluster creation uses Keystone trusts.
+
+If dashboard DNS management is enabled and the DNS zone is admin-owned, share the zone with the tenant project before applying:
+
+```sh
+openstack zone share create apps.mustelinet.com. 93dfe616bc234d37abc0e831f2b4e18f
+```
 
 ## Local Authentication Setup
 
@@ -115,11 +122,12 @@ Required commands:
 - `openstack`
 - `kubectl`
 - Magnum CLI support for `openstack coe ...`
+- Designate CLI support for `openstack recordset ...` when `hermes_dashboard_dns_enabled = true`
 
 One Fedora installation pattern is:
 
 ```sh
-sudo dnf install -y python3-openstackclient python3-magnumclient kubernetes1.33-client
+sudo dnf install -y python3-openstackclient python3-magnumclient python3-designateclient kubernetes1.33-client
 ```
 
 Verify your auth and tooling before Terraform:
@@ -240,6 +248,10 @@ Common Hermes knobs:
 - `hermes_data_size`
 - `hermes_dashboard_loadbalancer_enabled`
 - `hermes_dashboard_public_port`
+- `hermes_dashboard_dns_enabled`
+- `hermes_dashboard_dns_zone_name`
+- `hermes_dashboard_dns_name`
+- `hermes_dashboard_dns_ttl`
 - `hermes_api_port`
 - `hermes_api_server_model_name`
 - `hermes_api_server_cors_origins`

@@ -307,6 +307,9 @@ metadata:
   namespace: ${namespace}
   annotations:
     loadbalancer.openstack.org/floating-network-id: ${public_network_id}
+%{ if hermes_dashboard_dns_enabled ~}
+    loadbalancer.openstack.org/hostname: ${hermes_dashboard_fqdn}
+%{ endif ~}
 spec:
   type: LoadBalancer
   selector:

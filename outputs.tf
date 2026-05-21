@@ -116,6 +116,11 @@ output "hermes_dashboard_public_port" {
   value       = var.hermes_dashboard_loadbalancer_enabled ? var.hermes_dashboard_public_port : null
 }
 
+output "hermes_dashboard_fqdn" {
+  description = "Designate DNS name managed for the Hermes dashboard."
+  value       = var.hermes_dashboard_loadbalancer_enabled && var.hermes_dashboard_dns_enabled ? local.hermes_dashboard_fqdn : null
+}
+
 output "hermes_api_port" {
   description = "Service port for the Hermes OpenAI-compatible API server."
   value       = var.hermes_api_port

@@ -343,6 +343,45 @@ variable "hermes_dashboard_loadbalancer_enabled" {
   default     = true
 }
 
+variable "hermes_dashboard_dns_enabled" {
+  description = "Whether Terraform should upsert a Designate A record for the Hermes dashboard LoadBalancer."
+  type        = bool
+  default     = true
+}
+
+variable "hermes_dashboard_dns_zone_name" {
+  description = "Designate DNS zone that should contain the Hermes dashboard record."
+  type        = string
+  default     = "apps.mustelinet.com."
+
+  validation {
+    condition     = trimspace(var.hermes_dashboard_dns_zone_name) != ""
+    error_message = "hermes_dashboard_dns_zone_name cannot be empty."
+  }
+}
+
+variable "hermes_dashboard_dns_name" {
+  description = "Relative DNS name to create inside hermes_dashboard_dns_zone_name for the Hermes dashboard."
+  type        = string
+  default     = "hermes"
+
+  validation {
+    condition     = trimspace(var.hermes_dashboard_dns_name) != ""
+    error_message = "hermes_dashboard_dns_name cannot be empty."
+  }
+}
+
+variable "hermes_dashboard_dns_ttl" {
+  description = "TTL, in seconds, for the Hermes dashboard DNS A record."
+  type        = number
+  default     = 300
+
+  validation {
+    condition     = var.hermes_dashboard_dns_ttl > 0
+    error_message = "hermes_dashboard_dns_ttl must be greater than zero."
+  }
+}
+
 variable "hermes_api_server_key" {
   description = "Optional bearer token override for the Hermes API server. Leave null to generate a local-only value."
   type        = string

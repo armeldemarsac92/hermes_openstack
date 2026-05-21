@@ -1,13 +1,15 @@
 locals {
-  generated_dir            = abspath("${path.module}/${var.generated_dir}")
-  generated_kubeconfig_dir = "${local.generated_dir}/kubeconfig"
-  kubeconfig_path          = "${local.generated_kubeconfig_dir}/config"
-  os_client_config_file    = coalesce(var.os_client_config_file, "${path.module}/clouds.yaml")
-  keypair_name             = var.create_keypair ? coalesce(var.keypair_name, "${var.cluster_name}-key") : var.existing_keypair_name
-  private_key_path         = var.create_keypair ? "${local.generated_dir}/${local.keypair_name}.pem" : null
-  expected_ready_nodes     = var.master_count + var.node_count + (var.gemma_nodegroup_enabled ? var.gemma_worker_count : 0)
-  hermes_api_server_key    = coalesce(var.hermes_api_server_key, substr(sha256(join(":", [var.cloud, var.cluster_name, data.openstack_containerinfra_clustertemplate_v1.capi.id])), 0, 32))
-  public_network_id        = var.hermes_dashboard_loadbalancer_enabled ? data.openstack_networking_network_v2.public[0].id : ""
+  generated_dir                  = abspath("${path.module}/${var.generated_dir}")
+  generated_kubeconfig_dir       = "${local.generated_dir}/kubeconfig"
+  kubeconfig_path                = "${local.generated_kubeconfig_dir}/config"
+  os_client_config_file          = coalesce(var.os_client_config_file, "${path.module}/clouds.yaml")
+  keypair_name                   = var.create_keypair ? coalesce(var.keypair_name, "${var.cluster_name}-key") : var.existing_keypair_name
+  private_key_path               = var.create_keypair ? "${local.generated_dir}/${local.keypair_name}.pem" : null
+  expected_ready_nodes           = var.master_count + var.node_count + (var.gemma_nodegroup_enabled ? var.gemma_worker_count : 0)
+  hermes_api_server_key          = coalesce(var.hermes_api_server_key, substr(sha256(join(":", [var.cloud, var.cluster_name, data.openstack_containerinfra_clustertemplate_v1.capi.id])), 0, 32))
+  public_network_id              = var.hermes_dashboard_loadbalancer_enabled ? data.openstack_networking_network_v2.public[0].id : ""
+  hermes_dashboard_dns_zone_name = "${trimsuffix(var.hermes_dashboard_dns_zone_name, ".")}."
+  hermes_dashboard_fqdn          = "${trimsuffix(var.hermes_dashboard_dns_name, ".")}.${local.hermes_dashboard_dns_zone_name}"
 
   workloads_yaml = templatefile("${path.module}/templates/workloads.yaml.tftpl", {
     namespace                        = var.kubernetes_namespace
@@ -34,6 +36,8 @@ locals {
     hermes_dashboard_public_port     = var.hermes_dashboard_public_port
     hermes_dashboard_lb_enabled      = var.hermes_dashboard_loadbalancer_enabled
     public_network_id                = local.public_network_id
+    hermes_dashboard_dns_enabled     = var.hermes_dashboard_dns_enabled
+    hermes_dashboard_fqdn            = local.hermes_dashboard_fqdn
     hermes_api_port                  = var.hermes_api_port
     hermes_api_server_key            = local.hermes_api_server_key
     hermes_api_server_model_name     = var.hermes_api_server_model_name
@@ -88,6 +92,22 @@ resource "terraform_data" "generated_dirs" {
   provisioner "local-exec" {
     command     = "mkdir -p '${local.generated_kubeconfig_dir}'"
     interpreter = ["/bin/sh", "-c"]
+  }
+}
+
+resource "terraform_data" "dns_cli_preflight" {
+  count      = var.deploy_workloads && var.hermes_dashboard_loadbalancer_enabled && var.hermes_dashboard_dns_enabled ? 1 : 0
+  depends_on = [terraform_data.preflight]
+
+  triggers_replace = [
+    local.hermes_dashboard_dns_zone_name,
+    local.hermes_dashboard_fqdn,
+  ]
+
+  provisioner "local-exec" {
+    working_dir = path.module
+    interpreter = ["/bin/sh", "-c"]
+    command     = "openstack recordset --help >/dev/null 2>&1 || { echo 'OpenStack Designate CLI support is required for hermes_dashboard_dns_enabled=true. Install python3-designateclient or disable Hermes dashboard DNS management.' >&2; exit 1; }"
   }
 }
 
@@ -359,6 +379,58 @@ resource "terraform_data" "wait_for_workloads" {
         fi
         sleep 15
       done
+    EOT
+  }
+}
+
+resource "terraform_data" "hermes_dashboard_dns" {
+  count = var.deploy_workloads && var.hermes_dashboard_loadbalancer_enabled && var.hermes_dashboard_dns_enabled ? 1 : 0
+
+  depends_on = [
+    terraform_data.dns_cli_preflight,
+    terraform_data.wait_for_workloads,
+  ]
+
+  input = {
+    zone = local.hermes_dashboard_dns_zone_name
+    fqdn = local.hermes_dashboard_fqdn
+    ttl  = tostring(var.hermes_dashboard_dns_ttl)
+  }
+
+  triggers_replace = [
+    openstack_containerinfra_cluster_v1.hermes.id,
+    local.workloads_yaml_hash,
+    local.kubeconfig_path,
+    var.hermes_dashboard_public_service_name,
+    local.hermes_dashboard_dns_zone_name,
+    local.hermes_dashboard_fqdn,
+    tostring(var.hermes_dashboard_dns_ttl),
+  ]
+
+  provisioner "local-exec" {
+    working_dir = path.module
+    interpreter = ["/bin/sh", "-c"]
+    environment = {
+      OS_CLIENT_CONFIG_FILE = local.os_client_config_file
+      OS_CLOUD              = var.cloud
+      KUBECONFIG            = local.kubeconfig_path
+    }
+    command = <<-EOT
+      set -eu
+      ip=$(kubectl -n '${var.kubernetes_namespace}' get svc '${var.hermes_dashboard_public_service_name}' -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+      if [ -z "$ip" ]; then
+        echo "Hermes dashboard LoadBalancer has no assigned IP." >&2
+        kubectl -n '${var.kubernetes_namespace}' get svc '${var.hermes_dashboard_public_service_name}' -o wide >&2 || true
+        exit 1
+      fi
+
+      records=$(openstack --os-cloud "$OS_CLOUD" recordset list '${self.input.zone}' --name '${self.input.fqdn}' -f value -c id)
+      rs=$(printf '%s\n' "$records" | sed -n '1p')
+      if [ -n "$rs" ]; then
+        openstack --os-cloud "$OS_CLOUD" recordset set '${self.input.zone}' "$rs" --record "$ip" --ttl '${self.input.ttl}'
+      else
+        openstack --os-cloud "$OS_CLOUD" recordset create '${self.input.zone}' '${self.input.fqdn}' --type A --record "$ip" --ttl '${self.input.ttl}'
+      fi
     EOT
   }
 }
