@@ -85,7 +85,7 @@ clouds:
   tenant:
     auth_type: v3applicationcredential
     auth:
-      auth_url: https://YOUR_KEYSTONE_OR_VIP:5000
+      auth_url: https://auth.mustelinet.com
       application_credential_id: CHANGE_ME
       application_credential_secret: CHANGE_ME
     region_name: RegionOne
